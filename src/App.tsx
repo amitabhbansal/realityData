@@ -2,190 +2,122 @@
  * Copyright (c) Bentley Systems, Incorporated. All rights reserved.
  * See LICENSE.md in the project root for license terms and full copyright notice.
  *--------------------------------------------------------------------------------------------*/
-
 import "./App.scss";
-
-import type { ScreenViewport } from "@itwin/core-frontend";
-import { FitViewTool, IModelApp, StandardViewId } from "@itwin/core-frontend";
-import { FillCentered } from "@itwin/core-react";
-import { ProgressLinear } from "@itwin/itwinui-react";
+import React, { useEffect } from "react";
+import { UiFramework } from "@itwin/appui-react";
 import {
-  MeasurementActionToolbar,
-  MeasureTools,
-  MeasureToolsUiItemsProvider,
-} from "@itwin/measure-tools-react";
-import {
-  AncestorsNavigationControls,
-  CopyPropertyTextContextMenuItem,
-  PropertyGridManager,
-  PropertyGridUiItemsProvider,
-  ShowHideNullValuesSettingsMenuItem,
-} from "@itwin/property-grid-react";
-import {
-  TreeWidget,
-  TreeWidgetUiItemsProvider,
-} from "@itwin/tree-widget-react";
-import {
-  useAccessToken,
+  BlankConnectionViewState,
   Viewer,
-  ViewerContentToolsProvider,
   ViewerNavigationToolsProvider,
-  ViewerPerformance,
-  ViewerStatusbarItemsProvider,
 } from "@itwin/web-viewer-react";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { RealityDataWidgetProvider } from "./RealityDataWidget";
+import { authClient } from "./common/AuthorizationClient";
+import { Cartographic, ColorDef, RenderMode } from "@itwin/core-common";
+import { Matrix3d, Range3d } from "@itwin/core-geometry";
+import { IModelApp, ScreenViewport, Viewport } from "@itwin/core-frontend";
 
-import { Auth } from "./Auth";
-import { history } from "./history";
+// START VIEW_SETUP
+const uiProviders = [
+  new RealityDataWidgetProvider(),
+  new ViewerNavigationToolsProvider(),
+];
 
-const App: React.FC = () => {
-  const [iModelId, setIModelId] = useState(process.env.IMJS_IMODEL_ID);
-  const [iTwinId, setITwinId] = useState(process.env.IMJS_ITWIN_ID);
-  const [changesetId, setChangesetId] = useState(
-    process.env.IMJS_AUTH_CLIENT_CHANGESET_ID
-  );
+//When there is no imodel
+const blankConnectionViewState: BlankConnectionViewState = {
+  displayStyle: { backgroundColor: ColorDef.black },
+  viewFlags: { renderMode: RenderMode.SmoothShade },
+  setAllow3dManipulations: true,
+};
 
-  const accessToken = useAccessToken();
+const onIModelAppInit = () => {
+  // Listen for the screen viewport to open
+  IModelApp.viewManager.onViewOpen.addOnce(onViewSynchronized);
+};
 
-  const authClient = Auth.getClient();
+const onViewSynchronized = (vp: ScreenViewport) => {
+  // Listen for the viewport and viewstate to synchronize
+  vp.onViewChanged.addOnce(setupView);
+};
 
-  const login = useCallback(async () => {
-    try {
-      await authClient.signInSilent();
-    } catch {
-      await authClient.signIn();
-    }
-  }, [authClient]);
-
-  useEffect(() => {
-    void login();
-  }, [login]);
-
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has("iTwinId")) {
-      setITwinId(urlParams.get("iTwinId") as string);
-    }
-    if (urlParams.has("iModelId")) {
-      setIModelId(urlParams.get("iModelId") as string);
-    }
-    if (urlParams.has("changesetId")) {
-      setChangesetId(urlParams.get("changesetId") as string);
-    }
-  }, []);
-
-  useEffect(() => {
-    let url = `viewer?iTwinId=${iTwinId}`;
-
-    if (iModelId) {
-      url = `${url}&iModelId=${iModelId}`;
-    }
-
-    if (changesetId) {
-      url = `${url}&changesetId=${changesetId}`;
-    }
-    history.push(url);
-  }, [iTwinId, iModelId, changesetId]);
-
-  /** NOTE: This function will execute the "Fit View" tool after the iModel is loaded into the Viewer.
-   * This will provide an "optimal" view of the model. However, it will override any default views that are
-   * stored in the iModel. Delete this function and the prop that it is passed to if you prefer
-   * to honor default views when they are present instead (the Viewer will still apply a similar function to iModels that do not have a default view).
-   */
-  const viewConfiguration = useCallback((viewPort: ScreenViewport) => {
-    // default execute the fitview tool and use the iso standard view after tile trees are loaded
-    const tileTreesLoaded = () => {
-      return new Promise((resolve, reject) => {
-        const start = new Date();
-        const intvl = setInterval(() => {
-          if (viewPort.areAllTileTreesLoaded) {
-            ViewerPerformance.addMark("TilesLoaded");
-            ViewerPerformance.addMeasure(
-              "TileTreesLoaded",
-              "ViewerStarting",
-              "TilesLoaded"
-            );
-            clearInterval(intvl);
-            resolve(true);
-          }
-          const now = new Date();
-          // after 20 seconds, stop waiting and fit the view
-          if (now.getTime() - start.getTime() > 20000) {
-            reject();
-          }
-        }, 100);
-      });
-    };
-
-    tileTreesLoaded().finally(() => {
-      void IModelApp.tools.run(FitViewTool.toolId, viewPort, true, false);
-      viewPort.view.setStandardRotation(StandardViewId.Iso);
+/**
+ * Manipulate the initial view state to look pretty. You can comment this out to see the default view.
+ * The BlankConnectionViewState interface also exposes a limited set of parameters (in `lookAt`) that can change the initial view.
+ */
+const setupView = (vp: Viewport) => {
+  if (vp && vp.view.is3d()) {
+    // Set the origin required for the view
+    vp.view.setOrigin({
+      x: -184,
+      y: -73,
+      z: -74,
     });
+    // Set the extents of the view frustum (this is different than the extents for the project)
+    vp.view.setExtents({
+      x: 395.0617283950802,
+      y: 381.4973772055495,
+      z: 39.50617283951034,
+    });
+    /**
+     * Rotate the view so it looks good. This value (and the ones above) were generated by manually manipulating the view to look good
+     * and then logging the origin, extents, and rotation of that view.
+     */
+    const rotationMatrix = Matrix3d.fromJSON([
+      [0.9800665778412416, 0.1986693307950613, 1.2365108936762105e-17],
+      [-0.09011563789485497, 0.44455439844762656, 0.891207360061435],
+      [0.17705556982303852, -0.8734425475223379, 0.4535961214255781],
+    ]);
+    vp.view.setRotation(rotationMatrix);
+    vp.synchWithView();
+  }
+};
+// END VIEW_SETUP
+
+const iTwinId = process.env.IMJS_ITWIN_ID;
+
+const RealityDataApp = () => {
+  /** Sign-in */
+  useEffect(() => {
+    void authClient.signIn();
   }, []);
 
-  const viewCreatorOptions = useMemo(
-    () => ({ viewportConfigurer: viewConfiguration }),
-    [viewConfiguration]
-  );
-
-  const onIModelAppInit = useCallback(async () => {
-    // iModel now initialized
-    await TreeWidget.initialize();
-    await PropertyGridManager.initialize();
-    await MeasureTools.startup();
-    MeasurementActionToolbar.setDefaultActionProvider();
-  }, []);
-
+  /** The sample's render method */
+  // START VIEWER
   return (
     <div className="viewer-container">
-      {!accessToken && (
-        <FillCentered>
-          <div className="signin-content">
-            <ProgressLinear indeterminate={true} labels={["Signing in..."]} />
-          </div>
-        </FillCentered>
-      )}
       <Viewer
         iTwinId={iTwinId ?? ""}
-        iModelId={iModelId ?? ""}
-        changeSetId={changesetId}
         authClient={authClient}
-        viewCreatorOptions={viewCreatorOptions}
-        enablePerformanceMonitors={true} // see description in the README (https://www.npmjs.com/package/@itwin/web-viewer-react)
+        // This is the geographic location of the reality data in the real world.
+        location={Cartographic.fromDegrees({
+          longitude: -75.686694,
+          latitude: 40.065757,
+          height: 0,
+        })}
+        /**
+         * An extent is the volume/area occupied by the models/project.
+         * These are the extents extracted from the reality data's root document, converted from world extents to local extents.
+         */
+        extents={new Range3d(-194, -215, -56, 194, 216, 387)}
+        // The IModelApp singleton still loads even without an iModel provided (just without iModel specific properties defined).
         onIModelAppInit={onIModelAppInit}
-        uiProviders={[
-          new ViewerNavigationToolsProvider(),
-          new ViewerContentToolsProvider({
-            vertical: {
-              measureGroup: false,
-            },
-          }),
-          new ViewerStatusbarItemsProvider(),
-          new TreeWidgetUiItemsProvider(),
-          new PropertyGridUiItemsProvider({
-            propertyGridProps: {
-              autoExpandChildCategories: true,
-              ancestorsNavigationControls: (props) => (
-                <AncestorsNavigationControls {...props} />
-              ),
-              contextMenuItems: [
-                (props) => <CopyPropertyTextContextMenuItem {...props} />,
-              ],
-              settingsMenuItems: [
-                (props) => (
-                  <ShowHideNullValuesSettingsMenuItem
-                    {...props}
-                    persist={true}
-                  />
-                ),
-              ],
-            },
-          }),
-          new MeasureToolsUiItemsProvider(),
-        ]}
+        blankConnectionViewState={blankConnectionViewState}
+        defaultUiConfig={{
+          hideStatusBar: true,
+          hideToolSettings: true,
+        }}
+        enablePerformanceMonitors={false}
+        uiProviders={uiProviders}
+        theme={process.env.THEME ?? "dark"}
       />
     </div>
   );
+  // END VIEWER
 };
 
-export default App;
+// Define panel size
+UiFramework.frontstages.onFrontstageReadyEvent.addListener((event) => {
+  const { bottomPanel } = event.frontstageDef;
+  bottomPanel && (bottomPanel.size = 200);
+});
+
+export default RealityDataApp;
