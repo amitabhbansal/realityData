@@ -1,3 +1,4 @@
+import axios from "axios";
 import {
   ContextRealityModelProps,
   FeatureAppearance,
@@ -57,6 +58,17 @@ export default class RealityDataApi {
     }
 
     return availableModels;
+  }
+
+  // New method to fetch the access token using the proxy function
+  private static async getAccessToken(): Promise<string> {
+    try {
+      const response = await axios.get("/.well-known/openid-configuration");
+      return response.data.access_token;
+    } catch (error) {
+      console.error("Error fetching access token:", error);
+      throw error;
+    }
   }
 
   // START REALITY_TOGGLE_CALLBACK
